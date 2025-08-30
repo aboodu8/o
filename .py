@@ -5,11 +5,8 @@ from flask import Flask, request
 import threading
 import time
 import os
-import secrets
-import string
-import socket
 
-# إعدادات البوت - تأكد من صحة التوكن
+# إعدادات البوت
 TELEGRAM_BOT_TOKEN = "8275879185:AAFlth2Zuk2PdpNHWgTpanw6Q3F6NMNTsOs"
 ADMIN_ID = 6079905042  # ID المالك
 
@@ -22,9 +19,6 @@ user_sessions = {}
 # قائمة بالمستخدمين المفعلين
 activated_users = set()
 
-# قاموس لتخزين الروابط الفريدة
-unique_links = {}
-
 # تحميل البيانات المحفوظة إذا وجدت
 def load_data():
     global activated_users
@@ -32,67 +26,37 @@ def load_data():
         if os.path.exists('activated_users.json'):
             with open('activated_users.json', 'r') as f:
                 activated_users = set(json.load(f))
-        print(f"تم تحميل {len(activated_users)} مستخدم مفعل")
-    except Exception as e:
-        print(f"خطأ في تحميل البيانات: {e}")
+    except:
         activated_users = set()
 
 # حفظ البيانات
 def save_data():
-    try:
-        with open('activated_users.json', 'w') as f:
-            json.dump(list(activated_users), f)
-        print(f"تم حفظ {len(activated_users)} مستخدم مفعل")
-    except Exception as e:
-        print(f"خطأ في حفظ البيانات: {e}")
+    with open('activated_users.json', 'w') as f:
+        json.dump(list(activated_users), f)
 
 # تحميل البيانات عند البدء
 load_data()
 
-# إنشاء رمز فريد للرابط
-def generate_unique_token(length=16):
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
-
 # تطبيق Flask لمعالجة طلبات الويب
 app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "Bot is running! Use /location/<token> to share your location."
-
-@app.route('/location/<token>')
-def get_location(token):
-    # التحقق من صحة الرمز واستخراج user_id
-    if token not in unique_links:
-        return "الرابط غير صالح أو منتهي الصلاحية. يرجى طلب رابط جديد من البوت."
-    
-    user_id = unique_links[token]['user_id']
-    timestamp = unique_links[token]['timestamp']
-    
-    # التحقق من أن الرابط لا يزال صالحًا (10 دقائق)
-    if time.time() - timestamp > 600:  # 10 دقائق
-        del unique_links[token]
-        return "انتهت صلاحية الرابط. يرجى طلب رابط جديد من البوت."
-    
+@app.route('/location/<user_id>')
+def get_location(user_id):
     # التحقق من أن المستخدم مفعل
     if int(user_id) not in activated_users and int(user_id) != ADMIN_ID:
         return "غير مصرح لك باستخدام هذا البوت. يرجى التواصل مع المسؤول."
     
     # إذا كان المستخدم قد منح إذن الموقع مسبقًا
-    if str(user_id) in user_sessions and user_sessions[str(user_id)].get('location_granted', False):
+    if user_id in user_sessions and user_sessions[user_id].get('location_granted', False):
         # إرسال الموقع إلى Telegram
-        lat = user_sessions[str(user_id)]['latitude']
-        lon = user_sessions[str(user_id)]['longitude']
+        lat = user_sessions[user_id]['latitude']
+        lon = user_sessions[user_id]['longitude']
         
-        try:
-            bot.send_message(
-                user_id, 
-                f"تم الحصول على موقعك:\nخط العرض: {lat}\nخط الطول: {lon}"
-            )
-            bot.send_location(user_id, lat, lon)
-        except Exception as e:
-            print(f"خطأ في إرسال الرسالة: {e}")
+        bot.send_message(
+            user_id, 
+            f"تم الحصول على موقعك:\nخط العرض: {lat}\nخط الطول: {lon}"
+        )
+        bot.send_location(user_id, lat, lon)
         
         return "تم إرسال موقعك إلى Telegram. يمكنك إغلاق هذه الصفحة."
     
@@ -124,7 +88,7 @@ def get_location(token):
                 document.getElementById("status").innerHTML = "جارٍ إرسال الموقع...";
                 
                 // إرسال البيانات إلى الخادم
-                fetch('/save_location/{token}', {{
+                fetch('/save_location/{user_id}', {{
                     method: 'POST',
                     headers: {{
                         'Content-Type': 'application/json',
@@ -229,35 +193,23 @@ def get_location(token):
     </html>
     '''
 
-@app.route('/save_location/<token>', methods=['POST'])
-def save_location(token):
+@app.route('/save_location/<user_id>', methods=['POST'])
+def save_location(user_id):
     try:
-        # التحقق من صحة الرمز
-        if token not in unique_links:
-            return "الرابط غير صالح أو منتهي الصلاحية.", 400
-        
-        user_id = unique_links[token]['user_id']
-        
         data = request.get_json()
         if data:
-            user_sessions[str(user_id)] = {
+            user_sessions[user_id] = {
                 'latitude': data['latitude'],
                 'longitude': data['longitude'],
                 'location_granted': data['granted']
             }
             
             # إرسال الموقع إلى Telegram
-            try:
-                bot.send_message(
-                    user_id, 
-                    f"📍 تم الحصول على موقعك:\n• خط العرض: {data['latitude']}\n• خط الطول: {data['longitude']}"
-                )
-                bot.send_location(user_id, data['latitude'], data['longitude'])
-            except Exception as e:
-                print(f"خطأ في إرسال الموقع: {e}")
-            
-            # حذف الرابط بعد استخدامه
-            del unique_links[token]
+            bot.send_message(
+                user_id, 
+                f"📍 تم الحصول على موقعك:\n• خط العرض: {data['latitude']}\n• خط الطول: {data['longitude']}"
+            )
+            bot.send_location(user_id, data['latitude'], data['longitude'])
             
             return "تم حفظ الموقع بنجاح!"
         else:
@@ -268,8 +220,8 @@ def save_location(token):
 
 # تشغيل خادم Flask في خيط منفصل
 def run_flask():
-    port = 5000  # استخدام المنفذ 5000 بدلاً من 80
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 # بدء تشغيل خادم Flask في خيط منفصل
 flask_thread = threading.Thread(target=run_flask)
@@ -279,17 +231,10 @@ flask_thread.start()
 # انتظار حتى يبدأ الخادم
 time.sleep(2)
 
-# الحصول على IP السيرفر
-try:
-    hostname = socket.gethostname()
-    server_ip = socket.gethostbyname(hostname)
-except:
-    server_ip = "172.245.154.102"  # استخدام IP السيرفر مباشرة
-
-public_url = f"http://{server_ip}:5000"
-
-print(f"Server is running at: {public_url}")
-print(f"Location endpoint: {public_url}/location/<token>")
+# الحصول على رابط التطبيق (سيحتاج إلى نشر على GitHub أو منصة أخرى)
+# في هذه الحالة، سيكون الرابط هو الرابط الذي ينشره مزود الاستضافة
+public_url = os.environ.get('APP_URL', 'https://o-one-sand.vercel.app')
+print(f"App is running at: {public_url}")
 
 # معالجة الأمر /start
 @bot.message_handler(commands=['start'])
@@ -332,24 +277,16 @@ def handle_callback_query(call):
             return
             
         try:
-            # إنشاء رمز فريد للرابط
-            token = generate_unique_token()
-            unique_links[token] = {
-                'user_id': user_id,
-                'timestamp': time.time()
-            }
-            
-            # إرسال الرابط الفريد للمستخدم
-            location_url = f"{public_url}/location/{token}"
+            # إرسال الرابط للمستخدم
+            location_url = f"{public_url}/location/{call.message.chat.id}"
             bot.send_message(
                 call.message.chat.id,
                 f"🔗 اضغط على الرابط أدناه لمشاركة موقعك:\n\n{location_url}\n\n"
-                f"⏰ هذا الرابط صالح لمدة 10 دقائق فقط.\n"
-                f"سيتم إرسال موقعك تلقائيًا إلى هذه المحادثة بعد منح الإذن."
+                "سيتم إرسال موقعك تلقائيًا إلى هذه المحادثة بعد منح الإذن."
             )
             
             # تأكيد استلام الطلب
-            bot.answer_callback_query(call.id, "تم إنشاء رابط جديد لمشاركة الموقع")
+            bot.answer_callback_query(call.id, "تم إرسال رابط مشاركة الموقع")
         except Exception as e:
             print(f"Error handling location request: {e}")
             bot.answer_callback_query(call.id, "حدث خطأ، يرجى المحاولة مرة أخرى")
@@ -472,31 +409,7 @@ def handle_messages(message):
                 "استخدم الأزرار للتفاعل مع البوت."
             )
 
-# دالة لتنظيف الروابط المنتهية الصلاحية (تعمل في الخلفية)
-def clean_expired_links():
-    while True:
-        try:
-            current_time = time.time()
-            expired_tokens = [token for token, data in unique_links.items() 
-                             if current_time - data['timestamp'] > 600]  # 10 دقائق
-            
-            for token in expired_tokens:
-                del unique_links[token]
-                
-            time.sleep(60)  # التحقق كل دقيقة
-        except:
-            time.sleep(60)
-
-# بدء عملية تنظيف الروابط المنتهية في خلفية
-cleaner_thread = threading.Thread(target=clean_expired_links)
-cleaner_thread.daemon = True
-cleaner_thread.start()
-
 # تشغيل البوت
 if __name__ == "__main__":
     print("Bot is running...")
-    try:
-        bot.infinity_polling()
-    except Exception as e:
-        print(f"Error: {e}")
-        print("تأكد من صحة توكن البوت وقم بتشغيل البوت مرة أخرى")
+    bot.infinity_polling()
